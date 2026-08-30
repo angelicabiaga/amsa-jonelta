@@ -257,17 +257,28 @@ function AdminDashboard({ profile, onLogout }) {
   const [loading, setLoading] = useState(true);
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [filter, setFilter] = useState('');
+  const [message, setMessage] = useState('');
 
   useEffect(() => {
     refresh();
   }, []);
 
-  async function refresh() {
-    setLoading(true);
+  // Auto-dismiss the confirmation banner instead of leaving it up forever.
+  useEffect(() => {
+    if (!message) return;
+    const t = setTimeout(() => setMessage(''), 3000);
+    return () => clearTimeout(t);
+  }, [message]);
+
+  // `silent: true` refreshes overview/rankings in the background without
+  // flipping the page into a full "Loading…" state — used after saves so
+  // the table just updates in place instead of flickering blank.
+  async function refresh({ silent = false } = {}) {
+    if (!silent) setLoading(true);
     const [ov, rk] = await Promise.all([api.getAdminOverview(), api.getRankings()]);
     if (ov.success) setOverview(ov);
     if (rk.success) setRankings(rk);
-    setLoading(false);
+    if (!silent) setLoading(false);
   }
 
   const filteredRows = useMemo(() => {
@@ -302,6 +313,7 @@ function AdminDashboard({ profile, onLogout }) {
         <section className="panel">
           <div className="panel-header-row">
             <h2 className="panel-title">All members</h2>
+            {message && <div className="inline-message">{message}</div>}
             <div className="panel-actions">
               <input
                 className="search-input"
@@ -358,7 +370,7 @@ function AdminDashboard({ profile, onLogout }) {
         </section>
       )}
 
-      {!loading && tab === 'events' && <EventsManager onChanged={refresh} />}
+      {!loading && tab === 'events' && <EventsManager onChanged={() => refresh({ silent: true })} />}
 
       {!loading && tab === 'rankings' && rankings && (
         <section className="ranking-grid">
@@ -372,8 +384,11 @@ function AdminDashboard({ profile, onLogout }) {
           mode="add"
           onClose={() => setShowAddEvent(false)}
           onSaved={() => {
+            // Close instantly on success — the overview refresh happens
+            // quietly in the background and swaps in when it's ready.
             setShowAddEvent(false);
-            refresh();
+            setMessage('Event added.');
+            refresh({ silent: true });
           }}
         />
       )}
@@ -382,7 +397,7 @@ function AdminDashboard({ profile, onLogout }) {
 }
 
 /* ------------------------------------------------------------------ *
- *  Admin — Manage events (new)
+ *  Admin — Manage events
  * ------------------------------------------------------------------ */
 function EventsManager({ onChanged }) {
   const [events, setEvents] = useState([]);
@@ -396,6 +411,12 @@ function EventsManager({ onChanged }) {
     load();
   }, []);
 
+  useEffect(() => {
+    if (!message) return;
+    const t = setTimeout(() => setMessage(''), 3000);
+    return () => clearTimeout(t);
+  }, [message]);
+
   async function load() {
     setLoading(true);
     const res = await api.getEvents();
@@ -403,21 +424,45 @@ function EventsManager({ onChanged }) {
     setLoading(false);
   }
 
+  // Called the instant EventModal's save succeeds — patches the row in
+  // place instead of refetching the whole list, so there's no extra
+  // round trip between "saved" and the table showing the new data.
+  function applySavedEvent(eventObj) {
+    setEvents((prev) => {
+      const idx = prev.findIndex((ev) => ev.eventId === eventObj.eventId);
+      if (idx === -1) return [...prev, eventObj];
+      const next = [...prev];
+      next[idx] = eventObj;
+      return next;
+    });
+    setMessage(`"${eventObj.eventName}" saved.`);
+    // Member totals/columns may depend on this event's points or name —
+    // refresh them in the background, without blocking this view.
+    onChanged && onChanged();
+  }
+
+  // Optimistic delete: remove the row and close the confirm dialog right
+  // away. If the server call actually fails, restore the row and show
+  // why instead of leaving the UI stuck waiting.
   async function confirmDelete() {
     const ev = pendingDelete;
     if (!ev) return;
+    const snapshot = events;
+    setEvents((prev) => prev.filter((e) => e.eventId !== ev.eventId));
+    setPendingDelete(null);
+    setMessage(`"${ev.eventName}" deleted.`);
     setDeletingId(ev.eventId);
-    setMessage('');
     try {
       const res = await api.deleteEvent(ev.eventId);
       if (res.success) {
-        setMessage(`"${ev.eventName}" was deleted.`);
-        setPendingDelete(null);
-        await load();
         onChanged && onChanged();
       } else {
-        setMessage(res.error || 'Could not delete this event.');
+        setEvents(snapshot);
+        setMessage(res.error || 'Could not delete this event — it has been restored.');
       }
+    } catch (err) {
+      setEvents(snapshot);
+      setMessage('Could not reach the server — the event has been restored.');
     } finally {
       setDeletingId(null);
     }
@@ -490,10 +535,9 @@ function EventsManager({ onChanged }) {
           mode="edit"
           initialEvent={editingEvent}
           onClose={() => setEditingEvent(null)}
-          onSaved={async () => {
+          onSaved={(eventObj) => {
             setEditingEvent(null);
-            await load();
-            onChanged && onChanged();
+            applySavedEvent(eventObj);
           }}
         />
       )}
@@ -501,7 +545,6 @@ function EventsManager({ onChanged }) {
       {pendingDelete && (
         <ConfirmDeleteModal
           eventName={pendingDelete.eventName}
-          deleting={deletingId === pendingDelete.eventId}
           onCancel={() => setPendingDelete(null)}
           onConfirm={confirmDelete}
         />
@@ -512,9 +555,10 @@ function EventsManager({ onChanged }) {
 
 /**
  * Styled stand-in for window.confirm — used before permanently deleting
- * an event.
+ * an event. Confirming closes this immediately; the actual delete
+ * request happens in the background (see confirmDelete above).
  */
-function ConfirmDeleteModal({ eventName, deleting, onCancel, onConfirm }) {
+function ConfirmDeleteModal({ eventName, onCancel, onConfirm }) {
   return (
     <div className="modal-backdrop" onClick={onCancel}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -524,11 +568,11 @@ function ConfirmDeleteModal({ eventName, deleting, onCancel, onConfirm }) {
           registered will lose the points from this event.
         </p>
         <div className="modal-actions">
-          <button type="button" className="btn-ghost-light" onClick={onCancel} disabled={deleting}>
+          <button type="button" className="btn-ghost-light" onClick={onCancel}>
             Cancel
           </button>
-          <button type="button" className="btn-danger" onClick={onConfirm} disabled={deleting}>
-            {deleting ? 'Deleting…' : 'Delete event'}
+          <button type="button" className="btn-danger" onClick={onConfirm}>
+            Delete event
           </button>
         </div>
       </div>
@@ -581,6 +625,11 @@ function RankingTable({ title, rows }) {
  * Handles both creating a new event ("add") and editing an existing one
  * ("edit"). In edit mode, initialEvent pre-fills the form and the submit
  * calls api.updateEvent instead of api.addEvent.
+ *
+ * On success, this builds the resulting event object itself (rather than
+ * making the caller refetch it) and hands it to onSaved — that's what
+ * lets the parent close the modal and update its table in the very same
+ * tick, with no extra network round trip in between.
  */
 function EventModal({ mode, initialEvent, onClose, onSaved }) {
   const isEdit = mode === 'edit';
@@ -600,11 +649,26 @@ function EventModal({ mode, initialEvent, onClose, onSaved }) {
     }
     setSaving(true);
     setError('');
-    const payload = { eventName: eventName.trim(), points: Number(points), category, startDate, endDate };
+    const trimmedName = eventName.trim();
+    const payload = { eventName: trimmedName, points: Number(points), category, startDate, endDate };
     const res = isEdit ? await api.updateEvent(initialEvent.eventId, payload) : await api.addEvent(payload);
     setSaving(false);
-    if (res.success) onSaved();
-    else setError(res.error || 'Could not save this event.');
+
+    if (!res.success) {
+      setError(res.error || 'Could not save this event.');
+      return;
+    }
+
+    const eventId = isEdit ? initialEvent.eventId : res.eventId;
+    onSaved({
+      eventId: String(eventId),
+      eventName: trimmedName,
+      category,
+      points: Number(points),
+      startDate: startDate ? new Date(startDate).toISOString() : null,
+      endDate: endDate ? new Date(endDate).toISOString() : null,
+      isOpen: computeIsOpen(startDate, endDate),
+    });
   }
 
   return (
@@ -670,4 +734,15 @@ function toDateInputValue(iso) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   return d.toISOString().slice(0, 10);
+}
+
+// Mirrors the backend's own isOpen logic (see getEventsPayload / addOneDay
+// in the Apps Script) so an optimistically-built event object shows the
+// correct Open/Closed status immediately, without waiting on a refetch.
+function computeIsOpen(startDate, endDate) {
+  const now = new Date();
+  const start = startDate ? new Date(startDate) : null;
+  const end = endDate ? new Date(endDate) : null;
+  const endInclusive = end ? new Date(end.getTime() + 24 * 60 * 60 * 1000) : null;
+  return (!start || now >= start) && (!endInclusive || now <= endInclusive);
 }

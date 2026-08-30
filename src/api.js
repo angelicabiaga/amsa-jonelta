@@ -19,12 +19,21 @@ async function post(action, body = {}) {
 }
 
 export const api = {
-  login: (studentId) => get('login', { studentId }),
+  // FIX: was sending { studentId }, but the backend's doGet reads
+  // e.parameter.AmsaStudentId (exact case) — the old key was always
+  // arriving as undefined, which is why login always failed with
+  // "Student ID is required." no matter what was typed.
+  login: (amsaStudentId) => get('login', { AmsaStudentId: amsaStudentId }),
+
   getEvents: () => get('events'),
   getAdminOverview: () => get('adminOverview'),
   getRankings: () => get('rankings'),
+
   addEvent: (payload) => post('addEvent', payload),
   updateEvent: (eventId, payload) => post('updateEvent', { eventId, ...payload }),
   deleteEvent: (eventId) => post('deleteEvent', { eventId }),
-  registerEvent: (studentId, eventId) => post('registerEvent', { studentId, eventId }),
+
+  // FIX: same mismatch as login — the backend's registerEvent destructures
+  // body.AmsaStudentId, not body.studentId.
+  registerEvent: (amsaStudentId, eventId) => post('registerEvent', { AmsaStudentId: amsaStudentId, eventId }),
 };
