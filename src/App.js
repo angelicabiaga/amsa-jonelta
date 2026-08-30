@@ -106,6 +106,60 @@ function RankBadge({ rank }) {
   return <span className={`rank-medal rank-medal-${rank}`}>{rank}</span>;
 }
 
+/**
+ * Center-screen confirmation card — used for "added" / "saved" / "deleted"
+ * feedback. Styled as a full card (icon badge, title, message) rather than
+ * a slim banner, matching the reference success-dialog look, but themed to
+ * the app's maroon/gold palette. Auto-dismisses after ~3 seconds — no OK
+ * button needed, since the point is to confirm and get out of the way.
+ *
+ * `toast` shape: { title, message, type } where type is 'success' | 'error'.
+ * If only `text` is passed (legacy shape used elsewhere), it's treated as
+ * the message with a default title based on type.
+ */
+function Toast({ toast }) {
+  const [phase, setPhase] = useState('idle'); // 'idle' | 'visible' | 'leaving'
+
+  useEffect(() => {
+    if (!toast) {
+      setPhase('idle');
+      return;
+    }
+    setPhase('visible');
+    // Start the fade/scale-out a little before the parent actually clears
+    // the toast (parent timers use 3000ms), so it reads as a smooth exit
+    // rather than an abrupt disappearance.
+    const leaveTimer = setTimeout(() => setPhase('leaving'), 2500);
+    return () => clearTimeout(leaveTimer);
+  }, [toast]);
+
+  if (!toast || phase === 'idle') return null;
+
+  const type = toast.type === 'error' ? 'error' : 'success';
+  const title = toast.title || (type === 'error' ? 'Something went wrong' : 'Success');
+  const message = toast.message || toast.text || '';
+
+  return (
+    <div className="toast-layer">
+      <div className={`toast-card${phase === 'leaving' ? ' toast-leaving' : ''}`}>
+        <div className={`toast-badge toast-badge-${type}`}>
+          {type === 'error' ? (
+            <svg viewBox="0 0 24 24" width="30" height="30" fill="none">
+              <path d="M6 6L18 18M18 6L6 18" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" width="30" height="30" fill="none">
+              <path d="M5 13l4.5 4.5L19 7" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
+        </div>
+        <h2 className="toast-title">{title}</h2>
+        {message && <p className="toast-message">{message}</p>}
+      </div>
+    </div>
+  );
+}
+
 /* ==================================================================== *
  *  MEMBER VIEW
  * ==================================================================== */
@@ -257,18 +311,19 @@ function AdminDashboard({ profile, onLogout }) {
   const [loading, setLoading] = useState(true);
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [filter, setFilter] = useState('');
-  const [message, setMessage] = useState('');
+  const [toast, setToast] = useState(null); // { title, message, type } — see <Toast /> above
 
   useEffect(() => {
     refresh();
   }, []);
 
-  // Auto-dismiss the confirmation banner instead of leaving it up forever.
+  // Auto-clear the toast — Toast itself starts fading at 2500ms, and this
+  // fully removes it from state at 3000ms.
   useEffect(() => {
-    if (!message) return;
-    const t = setTimeout(() => setMessage(''), 3000);
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3000);
     return () => clearTimeout(t);
-  }, [message]);
+  }, [toast]);
 
   // `silent: true` refreshes overview/rankings in the background without
   // flipping the page into a full "Loading…" state — used after saves so
@@ -295,6 +350,8 @@ function AdminDashboard({ profile, onLogout }) {
 
   return (
     <Shell eyebrow="AMSA-Jonelta Admin view" title="Members Point Tracker Overview" name={profile.name} onLogout={onLogout}>
+      <Toast toast={toast} />
+
       <nav className="tabbar">
         <button className={tab === 'overview' ? 'tab active' : 'tab'} onClick={() => setTab('overview')}>
           Members &amp; points
@@ -313,7 +370,6 @@ function AdminDashboard({ profile, onLogout }) {
         <section className="panel">
           <div className="panel-header-row">
             <h2 className="panel-title">All members</h2>
-            {message && <div className="inline-message">{message}</div>}
             <div className="panel-actions">
               <input
                 className="search-input"
@@ -387,7 +443,7 @@ function AdminDashboard({ profile, onLogout }) {
             // Close instantly on success — the overview refresh happens
             // quietly in the background and swaps in when it's ready.
             setShowAddEvent(false);
-            setMessage('Event added.');
+            setToast({ title: 'Success', message: 'The event was added.', type: 'success' });
             refresh({ silent: true });
           }}
         />
@@ -405,17 +461,17 @@ function EventsManager({ onChanged }) {
   const [editingEvent, setEditingEvent] = useState(null); // event object being edited, or null
   const [pendingDelete, setPendingDelete] = useState(null); // event object awaiting delete confirmation
   const [deletingId, setDeletingId] = useState(null);
-  const [message, setMessage] = useState('');
+  const [toast, setToast] = useState(null); // { title, message, type } — see <Toast /> above
 
   useEffect(() => {
     load();
   }, []);
 
   useEffect(() => {
-    if (!message) return;
-    const t = setTimeout(() => setMessage(''), 3000);
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3000);
     return () => clearTimeout(t);
-  }, [message]);
+  }, [toast]);
 
   async function load() {
     setLoading(true);
@@ -435,7 +491,7 @@ function EventsManager({ onChanged }) {
       next[idx] = eventObj;
       return next;
     });
-    setMessage(`"${eventObj.eventName}" saved.`);
+    setToast({ title: 'Success', message: `"${eventObj.eventName}" was saved.`, type: 'success' });
     // Member totals/columns may depend on this event's points or name —
     // refresh them in the background, without blocking this view.
     onChanged && onChanged();
@@ -450,7 +506,7 @@ function EventsManager({ onChanged }) {
     const snapshot = events;
     setEvents((prev) => prev.filter((e) => e.eventId !== ev.eventId));
     setPendingDelete(null);
-    setMessage(`"${ev.eventName}" deleted.`);
+    setToast({ title: 'Success', message: `"${ev.eventName}" was deleted.`, type: 'success' });
     setDeletingId(ev.eventId);
     try {
       const res = await api.deleteEvent(ev.eventId);
@@ -458,11 +514,19 @@ function EventsManager({ onChanged }) {
         onChanged && onChanged();
       } else {
         setEvents(snapshot);
-        setMessage(res.error || 'Could not delete this event — it has been restored.');
+        setToast({
+          title: 'Something went wrong',
+          message: res.error || 'Could not delete this event — it has been restored.',
+          type: 'error',
+        });
       }
     } catch (err) {
       setEvents(snapshot);
-      setMessage('Could not reach the server — the event has been restored.');
+      setToast({
+        title: 'Something went wrong',
+        message: 'Could not reach the server — the event has been restored.',
+        type: 'error',
+      });
     } finally {
       setDeletingId(null);
     }
@@ -470,9 +534,10 @@ function EventsManager({ onChanged }) {
 
   return (
     <section className="panel">
+      <Toast toast={toast} />
+
       <div className="panel-header-row">
         <h2 className="panel-title">Manage events</h2>
-        {message && <div className="inline-message">{message}</div>}
       </div>
 
       {loading ? (

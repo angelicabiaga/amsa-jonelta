@@ -572,11 +572,8 @@ button, input, select { font-family: inherit; }
 .cell-center { text-align: center; }
 .cell-total { font-family: var(--font-mono); font-weight: 700; color: var(--red-600); }
 
-/* UPDATED: Rankings now stack vertically — Local ranking on top,
-   International ranking below — so each table gets the panel's full
-   width instead of being squeezed into a half-width column. That's
-   what was truncating "Rank"/"Points" headers and member/committee
-   names down to "R…" / "POI…" / "SCOPH" in the screenshot. */
+/* Rankings stack vertically — Local ranking on top, International below —
+   so each table gets the panel's full width instead of a squeezed half. */
 .ranking-grid {
   display: grid;
   grid-template-columns: 1fr;
@@ -611,9 +608,6 @@ button, input, select { font-family: inherit; }
 .rank-medal-2 { background: #C7CDD1; color: #2C3438; }
 .rank-medal-3 { background: #C98A56; color: #3B2411; }
 
-/* Ranking table keeps a fixed layout so columns stay aligned, but with
-   the panel now full-width there's much more room for the Name column
-   before anything needs to truncate. */
 .ranking-table {
   table-layout: fixed;
   width: 100%;
@@ -686,4 +680,90 @@ button, input, select { font-family: inherit; }
   .panel-header-row { flex-direction: column; align-items: stretch; }
   .panel-actions { flex-direction: column; align-items: stretch; }
   .search-input { min-width: 0; width: 100%; }
+}
+
+/* ---------------- Toast (center-screen add/save/delete confirmation) ---------------- */
+/* Full-viewport overlay, dimmed like a modal backdrop, flex-centered.
+   Unlike a real modal, it's non-interactive: pointer-events: none on the
+   dimming layer means clicks pass straight through to the page — the
+   card auto-dismisses on its own, there's nothing to click to close it. */
+.toast-layer {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(43, 13, 13, 0.35);
+  pointer-events: none;
+  z-index: 100;
+  animation: toastLayerIn 0.15s ease;
+}
+
+/* The card itself — white, rounded, with the icon badge positioned to
+   overlap the top edge like the reference design. */
+.toast-card {
+  position: relative;
+  background: var(--paper);
+  border-radius: 20px;
+  padding: 52px 36px 32px;
+  width: 100%;
+  max-width: 340px;
+  text-align: center;
+  box-shadow: 0 30px 70px rgba(43, 13, 13, 0.4);
+  animation: toastIn 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+
+.toast-card.toast-leaving {
+  animation: toastOut 0.4s ease forwards;
+}
+
+/* Icon badge — a filled circle that sits half above the card's top edge,
+   matching the reference screenshot's success checkmark badge. */
+.toast-badge {
+  position: absolute;
+  top: -34px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 24px rgba(43, 13, 13, 0.3);
+  border: 4px solid var(--paper);
+}
+
+.toast-badge-success { background: var(--red-600); }
+.toast-badge-error { background: var(--danger-fg); }
+
+.toast-title {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 600;
+  color: var(--ink);
+  margin: 8px 0 10px;
+}
+
+.toast-message {
+  font-size: 14.5px;
+  color: var(--muted);
+  line-height: 1.55;
+  margin: 0;
+}
+
+@keyframes toastLayerIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes toastIn {
+  from { opacity: 0; transform: scale(0.82) translateY(16px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes toastOut {
+  from { opacity: 1; transform: scale(1) translateY(0); }
+  to { opacity: 0; transform: scale(0.9) translateY(-10px); }
 }
